@@ -18,6 +18,10 @@
     .input-field { width: 100%; border: 2.5px solid #f1f5f9; padding: 16px; border-radius: 16px; font-weight: 700; outline: none; transition: all 0.2s; background: #f8fafc; }
     .input-field:focus { border-color: #001f3f; background: white; box-shadow: 0 8px 20px -10px rgba(0,31,63,0.3); }
     .glass-nav { background: rgba(0, 31, 63, 0.95); backdrop-filter: blur(10px); }
+    
+    .font-chinese { font-family: "Kaiti", "楷体", "STKaiti", serif; }
+    .font-arial { font-family: Arial, sans-serif; }
+
     ::-webkit-scrollbar { width: 8px; }
     ::-webkit-scrollbar-track { background: #f1f5f9; }
     ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
@@ -33,7 +37,7 @@
     const { jsPDF } = window.jspdf;
 
     const DEFAULT_SPREADSHEET_ID = '1y62616eZuUGWqV75Y_D9m7UPQXx9IldR1kR7szLu1Bo';
-    const FOLDER_DRIVE_ID = '16nQ_z_MLOhp09i6BsHqrCqVdlmQMNkU2';
+    const FOLDER_DRIVE_ID = '16nQ_z_MLOhp09i6BsHqrCVdlmQMNkU2';
     const DEFAULT_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwMkyH6bF-b1pi0P3Q8ZQ8_DBmt8kK1hvFuy6GmLRHtAZkeePk94loquB-jUKsM2jlc/exec';
     const LOGO_URL = 'https://i.postimg.cc/VsW3PJMS/logo-sekolah.jpg';
 
@@ -44,6 +48,8 @@
       KEBANGSAAN: 'Kebangsaan'
     };
 
+    const isChinese = (char) => /[\u4E00-\u9FFF]/.test(char);
+
     const App = () => {
       const [view, setView] = useState('form');
       const [isAdmin, setIsAdmin] = useState(false);
@@ -53,6 +59,18 @@
       const [scriptUrl, setScriptUrl] = useState(localStorage.getItem('sjkc_script_url') || DEFAULT_SCRIPT_URL);
       const [totalSubmissions, setTotalSubmissions] = useState(parseInt(localStorage.getItem('sjkc_total') || '0'));
       const [logoBase64, setLogoBase64] = useState('');
+
+      const [formData, setFormData] = useState({
+        peringkat: Peringkat.SEKOLAH,
+        namaPertandingan: '',
+        tarikh: '',
+        anjuran: '',
+        tempat: '',
+        guruPengiring: '',
+        kategori: '',
+        peserta: [{ id: Date.now(), nama: '', tahun: '', pencapaian: '' }],
+        gambar: []
+      });
 
       useEffect(() => {
         localStorage.setItem('sjkc_script_url', scriptUrl);
@@ -76,18 +94,6 @@
         };
       }, []);
 
-      const [formData, setFormData] = useState({
-        peringkat: Peringkat.SEKOLAH,
-        namaPertandingan: '',
-        tarikh: '',
-        anjuran: '',
-        tempat: '',
-        guruPengiring: '',
-        kategori: '',
-        peserta: [{ id: Date.now(), nama: '', tahun: '', pencapaian: '' }],
-        gambar: []
-      });
-
       const handleImageUpload = (e) => {
         const files = Array.from(e.target.files);
         const remainingSlots = 2 - formData.gambar.length;
@@ -95,7 +101,6 @@
           alert("Maksimum 2 keping gambar sahaja dibenarkan.");
           return;
         }
-
         const filesToProcess = files.slice(0, remainingSlots);
         filesToProcess.forEach(file => {
           const reader = new FileReader();
@@ -106,6 +111,78 @@
         });
       };
 
+      /**
+       * Fungsi untuk melukis teks bercampur (Latin & Cina) dalam PDF.
+       * Saiz fon Cina ditetapkan kepada 12pt mengikut permintaan.
+       * Menggunakan canvas untuk ketepatan visual simbol Cina.
+       */
+      const drawMixedText = (doc, text, x, y, size = 11, isBold = false, align = 'left', columnWidth = 0) => {
+        if (!text) return;
+        const segments = text.match(/[\u4E00-\u9FFF]+|[^\u4E00-\u9FFF]+/g) || [];
+        
+        const chineseFontSize = 12; // Saiz spesifik untuk simbol cina
+        const scaleFactor = 4; // Untuk kualiti render canvas yang lebih tajam
+
+        // Pengiraan Lebar Keseluruhan Segmen (untuk alignment)
+        let totalWidthMm = 0;
+        const computedSegments = segments.map(segment => {
+          const isChin = isChinese(segment[0]);
+          if (isChin) {
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.font = `${isBold ? 'bold' : 'normal'} ${chineseFontSize * scaleFactor}px "Kaiti", "楷体", "STKaiti", serif`;
+            const widthPx = tempCtx.measureText(segment).width;
+            const widthMm = (widthPx / scaleFactor) * (25.4 / 72); // Convert points to mm
+            totalWidthMm += widthMm;
+            return { segment, isChin, widthMm };
+          } else {
+            doc.setFont('helvetica', isBold ? 'bold' : 'normal');
+            doc.setFontSize(size);
+            const widthMm = doc.getTextWidth(segment);
+            totalWidthMm += widthMm;
+            return { segment, isChin, widthMm };
+          }
+        });
+
+        let currentX = x;
+        if (align === 'center' && columnWidth > 0) {
+          currentX = x + (columnWidth - totalWidthMm) / 2;
+        }
+
+        computedSegments.forEach(item => {
+          if (item.isChin) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const fontSizePx = chineseFontSize * scaleFactor;
+            ctx.font = `${isBold ? 'bold' : 'normal'} ${fontSizePx}px "Kaiti", "楷体", "STKaiti", serif`;
+            
+            const metrics = ctx.measureText(item.segment);
+            const textWidthPx = metrics.width;
+            const textHeightPx = fontSizePx * 1.3;
+            
+            canvas.width = textWidthPx;
+            canvas.height = textHeightPx;
+            
+            ctx.font = `${isBold ? 'bold' : 'normal'} ${fontSizePx}px "Kaiti", "楷体", "STKaiti", serif`;
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#000000';
+            ctx.fillText(item.segment, 0, textHeightPx / 2);
+            
+            const imgData = canvas.toDataURL('image/png');
+            const mmHeight = (chineseFontSize * (25.4 / 72)) * 1.2;
+            
+            // Baseline adjustment: Sedikit ke atas untuk selari dengan Latin
+            doc.addImage(imgData, 'PNG', currentX, y - (chineseFontSize * 0.28), item.widthMm, mmHeight, undefined, 'FAST');
+            currentX += item.widthMm;
+          } else {
+            doc.setFont('helvetica', isBold ? 'bold' : 'normal'); 
+            doc.setFontSize(size);
+            doc.text(item.segment, currentX, y);
+            currentX += item.widthMm;
+          }
+        });
+      };
+
       const generatePDF = async (rekod) => {
         const doc = new jsPDF('p', 'mm', 'a4');
         const pageWidth = doc.internal.pageSize.getWidth();
@@ -113,106 +190,121 @@
         const margin = 15;
         let y = 15;
 
-        // 1. Header & Logo
         if (logoBase64) {
           try {
             doc.addImage(logoBase64, 'JPEG', (pageWidth / 2) - 15, y, 30, 30);
             y += 35;
           } catch (e) { y += 5; }
-        } else { y += 5; }
+        }
 
         doc.setFont('helvetica', 'bold').setFontSize(12);
         doc.text("REKOD PENGLIBATAN DAN PENCAPAIAN KOKURIKULUM,", pageWidth / 2, y, { align: 'center' }); y += 6;
-        doc.text("SUKAN DAN KO-AKADEMIK SJKC CHI CHIH", pageWidth / 2, y, { align: 'center' }); y += 10;
-        
-        doc.setLineWidth(0.5).setDrawColor(0).line(margin, y, pageWidth - margin, y); y += 10;
+        doc.text("SUKAN DAN KO-AKADEMIK SJKC CHI CHIH", pageWidth / 2, y, { align: 'center' }); y += 8;
+        doc.setLineWidth(0.5).setDrawColor(0).line(margin, y, pageWidth - margin, y); y += 8;
 
-        // 2. Maklumat Pertandingan
-        doc.setFontSize(10);
         const labels = ["Peringkat", "Pertandingan", "Tarikh", "Anjuran", "Tempat", "Guru Pengiring", "Kategori"];
         const values = [rekod.peringkat, rekod.namaPertandingan, rekod.tarikh, rekod.anjuran, rekod.tempat, rekod.guruPengiring || "-", rekod.kategori || "-"];
-
+        
         labels.forEach((label, i) => {
-          doc.setFont('helvetica', 'bold').text(`${label}:`, margin, y);
-          doc.setFont('helvetica', 'normal').text(String(values[i]), margin + 45, y); 
-          y += 7;
+          drawMixedText(doc, label + ":", margin, y, 11, true);
+          drawMixedText(doc, String(values[i]), margin + 45, y, 11, false);
+          y += 6.5;
         });
 
-        y += 5; 
-        doc.setFont('helvetica', 'bold').text("SENARAI NAMA MURID DAN PENCAPAIAN", margin, y); y += 6;
+        y += 2;
+        drawMixedText(doc, "SENARAI NAMA MURID DAN PENCAPAIAN", margin, y, 11, true); y += 5;
 
-        // 3. Jadual Murid (4 Kolum: NO, NAMA, TAHUN, PENCAPAIAN)
+        // Definisi Lebar Lajur (Total 180mm)
+        const colW = {
+          no: 10,
+          nama: 125,
+          tahun: 15,
+          pencapaian: 30
+        };
         const tableX = margin;
         const tableW = pageWidth - (margin * 2);
+        const rowH = 8.5; 
         
-        const drawTableHeader = (currentY) => {
-            doc.setFillColor(240, 240, 240).rect(tableX, currentY, tableW, 10, 'F');
-            doc.setDrawColor(80, 80, 80).rect(tableX, currentY, tableW, 10);
-            doc.setFont('helvetica', 'bold').setFontSize(9);
-            doc.text("NO", tableX + 3, currentY + 6.5);
-            doc.text("NAMA MURID", tableX + 15, currentY + 6.5);
-            doc.text("TAHUN", tableX + 120, currentY + 6.5);
-            doc.text("PENCAPAIAN", tableX + 145, currentY + 6.5);
-            return currentY + 10;
-        };
+        doc.setFillColor(240, 240, 240).rect(tableX, y, tableW, rowH, 'F');
+        doc.setDrawColor(80, 80, 80).rect(tableX, y, tableW, rowH);
+        doc.setFont('helvetica', 'bold').setFontSize(9);
+        
+        // Header Jadual - Alignment Center untuk No, Tahun, Pencapaian
+        doc.text("NO", tableX + colW.no/2, y + 5.5, { align: 'center' });
+        doc.text("NAMA MURID", tableX + colW.no + 3, y + 5.5);
+        doc.text("TAHUN", tableX + colW.no + colW.nama + colW.tahun/2, y + 5.5, { align: 'center' });
+        doc.text("PENCAPAIAN", tableX + colW.no + colW.nama + colW.tahun + colW.pencapaian/2, y + 5.5, { align: 'center' });
+        y += rowH;
 
-        y = drawTableHeader(y);
-
-        doc.setFont('helvetica', 'normal').setFontSize(9);
         rekod.peserta.forEach((p, idx) => {
-          if (y > pageHeight - 20) { 
-            doc.addPage();
-            y = 20;
-            y = drawTableHeader(y);
-            doc.setFont('helvetica', 'normal').setFontSize(9);
-          }
-          doc.setDrawColor(200).rect(tableX, y, tableW, 10);
-          doc.text(`${idx + 1}`, tableX + 3, y + 6.5);
-          doc.text(p.nama, tableX + 15, y + 6.5);
-          doc.text(p.tahun, tableX + 120, y + 6.5);
-          doc.text(p.pencapaian, tableX + 145, y + 6.5);
-          y += 10;
+          doc.setDrawColor(200).rect(tableX, y, tableW, rowH);
+          
+          // Lajur NO (Center)
+          drawMixedText(doc, String(idx + 1), tableX, y + 5.5, 10, false, 'center', colW.no);
+          
+          // Lajur NAMA (Left)
+          drawMixedText(doc, p.nama, tableX + colW.no + 3, y + 5.5, 10, false);
+          
+          // Lajur TAHUN (Center)
+          drawMixedText(doc, p.tahun, tableX + colW.no + colW.nama, y + 5.5, 10, false, 'center', colW.tahun);
+          
+          // Lajur PENCAPAIAN (Center)
+          drawMixedText(doc, p.pencapaian, tableX + colW.no + colW.nama + colW.tahun, y + 5.5, 10, false, 'center', colW.pencapaian);
+          
+          y += rowH;
         });
 
-        // 4. Lampiran Gambar (Maksimum 2 keping - Sebelah-menyebelah)
         if (rekod.gambar.length > 0) {
-          y += 10;
-          const boxH = 75; 
-          if (y + boxH + 15 > pageHeight) {
-            doc.addPage();
-            y = 20;
-          }
-          
-          doc.setFont('helvetica', 'bold').setFontSize(11).text("LAMPIRAN GAMBAR", margin, y); y += 8;
-          
-          const spacingX = 5;
-          const boxW = (tableW - spacingX) / 2;
-          
-          rekod.gambar.forEach((imgBase64, index) => {
-            const posX = margin + (index * (boxW + spacingX));
+          y += 6;
+          const footerLimit = pageHeight - 15;
+          const remainingH = footerLimit - y;
+          drawMixedText(doc, "LAMPIRAN GAMBAR", margin, y, 11, true); y += 6;
+          const maxImgH = Math.max(remainingH - 10, 40);
+
+          if (rekod.gambar.length === 1) {
+            const imgBase64 = rekod.gambar[0];
             try {
               const imgProps = doc.getImageProperties(imgBase64);
               const ratio = imgProps.width / imgProps.height;
-              let dW = boxW;
-              let dH = boxW / ratio;
-              if (dH > boxH) {
-                dH = boxH;
-                dW = boxH * ratio;
-              }
-              const finalX = posX + (boxW - dW) / 2;
-              const finalY = y + (boxH - dH) / 2;
-              doc.setDrawColor(240).rect(posX, y, boxW, boxH);
-              doc.addImage(imgBase64, 'JPEG', finalX, finalY, dW, dH, undefined, 'FAST');
-            } catch (e) { 
-              console.error(e);
-            }
-          });
+              let dW = tableW * 0.85;
+              let dH = dW / ratio;
+              if (dH > maxImgH) { dH = maxImgH; dW = dH * ratio; }
+              doc.addImage(imgBase64, 'JPEG', margin + (tableW - dW)/2, y, dW, dH, undefined, 'FAST');
+            } catch (e) { console.error(e); }
+          } else {
+            const spacingX = 5;
+            const boxW = (tableW - spacingX) / 2;
+            rekod.gambar.forEach((imgBase64, index) => {
+              const posX = margin + (index * (boxW + spacingX));
+              try {
+                const imgProps = doc.getImageProperties(imgBase64);
+                const ratio = imgProps.width / imgProps.height;
+                let dW = boxW;
+                let dH = boxW / ratio;
+                if (dH > maxImgH) { dH = maxImgH; dW = dH * ratio; }
+                doc.addImage(imgBase64, 'JPEG', posX + (boxW - dW)/2, y, dW, dH, undefined, 'FAST');
+              } catch (e) { console.error(e); }
+            });
+          }
         }
         return doc;
       };
 
+      const handlePreviu = async () => {
+        setIsSending(true);
+        try {
+          const doc = await generatePDF(formData);
+          const pdfBlob = doc.output('bloburl');
+          window.open(pdfBlob, '_blank');
+        } catch (err) {
+          alert("Gagal menjana previu.");
+        } finally {
+          setIsSending(false);
+        }
+      };
+
       const handleHantarLaporan = async (e) => {
-        e.preventDefault();
+        if(e) e.preventDefault();
         if (!scriptUrl) { alert("Sila periksa URL Apps Script di Panel Admin."); return; }
         
         setIsSending(true);
@@ -221,7 +313,6 @@
         try {
           const doc = await generatePDF(newRecord);
           const pdfBase64 = doc.output('datauristring').split(',')[1];
-
           const payload = {
             action: "uploadPDF",
             fileName: `LAPORAN_${newRecord.namaPertandingan.replace(/[^a-z0-9]/gi, '_').toUpperCase()}_${newRecord.tarikh}.pdf`,
@@ -236,22 +327,11 @@
               newRecord.peserta.map(p => `${p.nama} (${p.tahun}: ${p.pencapaian})`).join(', ')
             ]
           };
-
-          await fetch(scriptUrl, {
-            method: 'POST',
-            mode: 'no-cors',
-            body: JSON.stringify(payload)
-          });
-
+          await fetch(scriptUrl, { method: 'POST', mode: 'no-cors', body: JSON.stringify(payload) });
           setTotalSubmissions(prev => prev + 1);
-          setFormData({
-            peringkat: Peringkat.SEKOLAH, namaPertandingan: '', tarikh: '', anjuran: '', tempat: '', guruPengiring: '', kategori: '',
-            peserta: [{ id: Date.now(), nama: '', tahun: '', pencapaian: '' }], gambar: []
-          });
           setView('success');
           window.scrollTo({ top: 0, behavior: 'smooth' });
         } catch (err) {
-          console.error(err);
           alert("Gagal menghantar rekod.");
         } finally {
           setIsSending(false);
@@ -259,12 +339,17 @@
       };
 
       const loginAdmin = () => {
-        if (password === 'admin1') {
-          setIsAdmin(true);
-          setShowLogin(false);
-          setPassword('');
-        } else {
-          alert("Akses dinafikan.");
+        if (password === 'admin1') { setIsAdmin(true); setShowLogin(false); setPassword(''); }
+        else { alert("Akses dinafikan."); }
+      };
+
+      const resetBorang = () => {
+        if(confirm("Mulakan borang baru? Data sedia ada akan dikosongkan.")) {
+          setFormData({
+            peringkat: Peringkat.SEKOLAH, namaPertandingan: '', tarikh: '', anjuran: '', tempat: '', guruPengiring: '', kategori: '',
+            peserta: [{ id: Date.now(), nama: '', tahun: '', pencapaian: '' }], gambar: []
+          });
+          setView('form');
         }
       };
 
@@ -285,14 +370,14 @@
           <main className="flex-grow max-w-5xl mx-auto w-full p-4 md:p-8">
             {view === 'form' && (
               <div className="animate-fade-in bg-white p-6 md:p-10 rounded-[2.5rem] shadow-2xl border border-slate-100">
-                <header className="mb-10 border-b-4 border-yellow-400 pb-4">
-                  <h2 className="text-2xl font-black text-blue-950 uppercase tracking-tight flex items-center gap-3">
+                <header className="mb-10 border-b-4 border-yellow-400 pb-4 text-center md:text-left">
+                  <h2 className="text-2xl font-black text-blue-950 uppercase tracking-tight inline-flex items-center gap-3">
                     <span className="bg-blue-950 text-white w-8 h-8 rounded-lg flex items-center justify-center text-sm">1</span>
                     MAKLUMAT REKOD PENGLIBATAN
                   </h2>
                 </header>
                 
-                <form onSubmit={handleHantarLaporan} className="space-y-8">
+                <form className="space-y-8">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     <InputWrapper label="Peringkat Penglibatan">
                       <select className="input-field" value={formData.peringkat} onChange={e => setFormData({...formData, peringkat: e.target.value})}>
@@ -300,45 +385,40 @@
                       </select>
                     </InputWrapper>
                     <InputWrapper label="Nama Pertandingan / Aktiviti">
-                      <input required className="input-field" type="text" value={formData.namaPertandingan} onChange={e => setFormData({...formData, namaPertandingan: e.target.value})} placeholder="Contoh: Merentas Desa MSSD" />
+                      <input required className="input-field" type="text" value={formData.namaPertandingan} onChange={e => setFormData({...formData, namaPertandingan: e.target.value})} placeholder="Cth: Pertandingan Robotik" />
                     </InputWrapper>
                     <InputWrapper label="Tarikh Kejadian">
                       <input required className="input-field" type="date" value={formData.tarikh} onChange={e => setFormData({...formData, tarikh: e.target.value})} />
                     </InputWrapper>
                     <InputWrapper label="Penganjur / Organisasi">
-                      <input required className="input-field" type="text" value={formData.anjuran} onChange={e => setFormData({...formData, anjuran: e.target.value})} placeholder="Contoh: PPD Muar" />
+                      <input required className="input-field" type="text" value={formData.anjuran} onChange={e => setFormData({...formData, anjuran: e.target.value})} placeholder="Cth: KPM / JPN" />
                     </InputWrapper>
                     <InputWrapper label="Tempat / Lokasi">
-                      <input required className="input-field" type="text" value={formData.tempat} onChange={e => setFormData({...formData, tempat: e.target.value})} placeholder="Contoh: Stadium Muar" />
+                      <input required className="input-field" type="text" value={formData.tempat} onChange={e => setFormData({...formData, tempat: e.target.value})} placeholder="Cth: Dewan Sekolah" />
                     </InputWrapper>
                     <InputWrapper label="Guru Pengiring">
                       <input className="input-field" type="text" value={formData.guruPengiring} onChange={e => setFormData({...formData, guruPengiring: e.target.value})} placeholder="Nama Guru" />
                     </InputWrapper>
                     <InputWrapper label="Kategori">
-                      <input className="input-field" type="text" value={formData.kategori} onChange={e => setFormData({...formData, kategori: e.target.value})} placeholder="Cth: Lelaki L12 / Terbuka" />
+                      <input className="input-field" type="text" value={formData.kategori} onChange={e => setFormData({...formData, kategori: e.target.value})} placeholder="Cth: Individu / Kumpulan" />
                     </InputWrapper>
                   </div>
 
                   <div className="bg-slate-50 p-4 md:p-8 rounded-[2rem] border border-slate-200">
                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
                       <h3 className="font-black text-blue-950 text-lg uppercase tracking-tight">Senarai Murid & Pencapaian</h3>
-                      <button 
-                        type="button" 
-                        onClick={() => setFormData({...formData, peserta: [...formData.peserta, { id: Date.now(), nama: '', tahun: '', pencapaian: '' }]})} 
-                        className="bg-blue-950 text-yellow-400 px-6 py-3 rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-blue-900 transition-all flex items-center justify-center gap-2"
-                      >
+                      <button type="button" onClick={() => setFormData({...formData, peserta: [...formData.peserta, { id: Date.now(), nama: '', tahun: '', pencapaian: '' }]})} className="bg-blue-950 text-yellow-400 px-6 py-3 rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-blue-900 transition-all flex items-center gap-2">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M12 4v16m8-8H4"></path></svg>
                         Tambah Murid
                       </button>
                     </div>
-                    
                     <div className="space-y-4">
                       {formData.peserta.map((p, idx) => (
                         <div key={p.id} className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center bg-white p-5 rounded-3xl border border-slate-200 shadow-sm hover:border-blue-300 transition-all">
                           <div className="md:col-span-1 text-sm font-black text-slate-300 text-center">{idx+1}</div>
                           <div className="md:col-span-6">
                             <label className="text-[9px] uppercase font-bold text-slate-400 ml-1">Nama Murid</label>
-                            <input required className="w-full p-2 border-b border-slate-100 focus:border-blue-950 outline-none font-bold text-sm bg-transparent" placeholder="Penuh" value={p.nama} onChange={e => setFormData({...formData, peserta: formData.peserta.map(x => x.id === p.id ? {...x, nama: e.target.value} : x)})} />
+                            <input required className="w-full p-2 border-b border-slate-100 focus:border-blue-950 outline-none font-bold text-sm bg-transparent" placeholder="Cth: ALI BIN ABU / 张三" value={p.nama} onChange={e => setFormData({...formData, peserta: formData.peserta.map(x => x.id === p.id ? {...x, nama: e.target.value} : x)})} />
                           </div>
                           <div className="md:col-span-2">
                             <label className="text-[9px] uppercase font-bold text-slate-400 ml-1">Tahun</label>
@@ -360,28 +440,30 @@
 
                   <div className="bg-white p-10 rounded-[2.5rem] border-4 border-dashed border-slate-200 text-center group hover:border-blue-950 transition-all">
                     <label className="cursor-pointer block">
-                      <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform text-4xl">📸</div>
+                      <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform text-3xl">📸</div>
                       <h4 className="text-lg font-black text-blue-950 uppercase mb-2">Muat Naik Gambar</h4>
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Maksimum 2 Keping (Sebelah-menyebelah)</p>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Maksimum 2 Keping (Laporan 1 Muka Surat Sahaja)</p>
                       <input type="file" multiple className="hidden" accept="image/*" onChange={handleImageUpload} disabled={formData.gambar.length >= 2} />
                     </label>
                     <div className="flex flex-wrap gap-4 mt-8 justify-center">
                       {formData.gambar.map((img, i) => (
                         <div key={i} className="relative group/img animate-fade-in">
-                           <img src={img} className="w-32 h-32 rounded-[1.5rem] object-cover border-4 border-white shadow-xl" />
-                           <button type="button" onClick={() => setFormData({...formData, gambar: formData.gambar.filter((_, idx) => idx !== i)})} className="absolute -top-3 -right-3 bg-red-500 text-white w-8 h-8 rounded-full shadow-lg flex items-center justify-center border-2 border-white font-bold">×</button>
+                           <img src={img} className="w-24 h-24 rounded-[1rem] object-cover border-4 border-white shadow-xl" />
+                           <button type="button" onClick={() => setFormData({...formData, gambar: formData.gambar.filter((_, idx) => idx !== i)})} className="absolute -top-2 -right-2 bg-red-500 text-white w-6 h-6 rounded-full shadow-lg flex items-center justify-center border-2 border-white font-bold text-xs">×</button>
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  <button 
-                    disabled={isSending}
-                    type="submit" 
-                    className={`w-full py-7 rounded-[2rem] font-black text-xl shadow-2xl transition-all uppercase tracking-[0.2em] flex items-center justify-center gap-4 ${isSending ? 'bg-slate-300 cursor-not-allowed text-slate-500' : 'bg-blue-950 text-yellow-400 hover:bg-blue-900 active:scale-95'}`}
-                  >
-                    {isSending ? "Menjana PDF..." : "Simpan Rekod & Jana PDF"}
-                  </button>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
+                    <button type="button" onClick={handlePreviu} disabled={isSending} className="py-6 rounded-3xl font-black text-sm border-4 border-blue-950 text-blue-950 hover:bg-blue-50 transition-all uppercase tracking-widest flex items-center justify-center gap-2 shadow-xl">
+                      <span className="text-xl">👁️</span> Previu PDF
+                    </button>
+                    <button type="button" onClick={handleHantarLaporan} disabled={isSending} className={`py-6 rounded-3xl font-black text-sm shadow-2xl transition-all uppercase tracking-widest flex items-center justify-center gap-3 ${isSending ? 'bg-slate-300 cursor-not-allowed text-slate-500' : 'bg-blue-950 text-yellow-400 hover:bg-blue-900 active:scale-95'}`}>
+                      {isSending ? <div className="w-5 h-5 border-4 border-white border-t-transparent animate-spin rounded-full"></div> : <span className="text-xl">☁️</span>}
+                      Hantar Rekod ke GD
+                    </button>
+                  </div>
                 </form>
               </div>
             )}
@@ -390,10 +472,14 @@
               <div className="animate-fade-in text-center space-y-10 py-24 bg-white rounded-[3rem] shadow-2xl border p-12">
                 <div className="w-32 h-32 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-6 text-7xl animate-bounce">📁</div>
                 <div>
-                  <h2 className="text-4xl font-black text-blue-950 mb-4 tracking-tight uppercase">Rekod Disimpan!</h2>
-                  <p className="font-bold text-slate-500 text-lg max-w-md mx-auto leading-relaxed">Laporan PDF telah dihantar ke Google Drive dan data telah dikemaskini dalam Spreadsheet.</p>
+                  <h2 className="text-4xl font-black text-blue-950 mb-4 tracking-tight uppercase">Rekod Berjaya Dihantar!</h2>
+                  <p className="font-bold text-slate-500 text-lg max-w-md mx-auto leading-relaxed">Laporan PDF telah disimpan ke Google Drive dan data telah dikemaskini dalam Spreadsheet.</p>
                 </div>
-                <button onClick={() => setView('form')} className="bg-blue-950 text-yellow-400 px-16 py-6 rounded-3xl font-black uppercase text-sm shadow-2xl hover:scale-105 transition-all">Borang Baru</button>
+                <div className="flex flex-col md:flex-row gap-4 justify-center">
+                  <button onClick={handlePreviu} className="bg-blue-50 text-blue-950 px-12 py-5 rounded-2xl font-black uppercase text-xs shadow-lg hover:bg-blue-100 transition-all">👁️ Previu PDF</button>
+                  <button onClick={() => setView('form')} className="bg-blue-950 text-yellow-400 px-12 py-5 rounded-2xl font-black uppercase text-xs shadow-lg hover:bg-blue-900 transition-all">✏️ Edit Rekod</button>
+                  <button onClick={resetBorang} className="bg-white border-2 border-slate-200 text-slate-400 px-12 py-5 rounded-2xl font-black uppercase text-xs hover:border-blue-950 hover:text-blue-950 transition-all">Borang Baru</button>
+                </div>
               </div>
             )}
           </main>
@@ -420,22 +506,14 @@
                 </div>
               </div>
             )}
-            
-            <button 
-              onClick={() => !isAdmin ? setShowLogin(true) : setIsAdmin(!isAdmin)}
-              className="bg-blue-950 text-white shadow-2xl w-44 h-16 rounded-full flex items-center justify-center gap-3 transition-all hover:scale-110 px-8 border-4 border-white group font-black text-sm uppercase"
-            >
-              ADMIN
-            </button>
+            <button onClick={() => !isAdmin ? setShowLogin(true) : setIsAdmin(!isAdmin)} className="bg-blue-950 text-white shadow-2xl w-44 h-16 rounded-full flex items-center justify-center gap-3 transition-all hover:scale-110 px-8 border-4 border-white font-black text-sm uppercase">ADMIN</button>
           </div>
 
           {showLogin && (
             <div className="fixed inset-0 bg-blue-950/70 backdrop-blur-lg z-[200] flex items-center justify-center p-6">
-              <div className="bg-white p-12 rounded-[3.5rem] shadow-2xl w-full max-w-sm animate-fade-in border-8 border-slate-50/50">
-                <div className="text-center mb-10">
-                  <h3 className="font-black text-3xl text-blue-950 uppercase tracking-tight">Log Masuk</h3>
-                </div>
-                <input autoFocus type="password" placeholder="••••••••" className="input-field mb-8 text-center text-3xl tracking-[0.5em] placeholder:tracking-normal" value={password} onChange={e => setPassword(e.target.value)} onKeyPress={e => e.key === 'Enter' && loginAdmin()} />
+              <div className="bg-white p-12 rounded-[3.5rem] shadow-2xl w-full max-w-sm animate-fade-in border-8 border-slate-50/50 text-center">
+                <h3 className="font-black text-3xl text-blue-950 uppercase tracking-tight mb-8">Log Masuk</h3>
+                <input autoFocus type="password" placeholder="••••" className="input-field mb-8 text-center text-3xl tracking-[0.5em]" value={password} onChange={e => setPassword(e.target.value)} onKeyPress={e => e.key === 'Enter' && loginAdmin()} />
                 <button onClick={loginAdmin} className="w-full bg-blue-950 text-yellow-400 py-6 rounded-3xl font-black uppercase shadow-2xl tracking-widest">Masuk</button>
                 <button onClick={() => { setShowLogin(false); setPassword(''); }} className="w-full text-slate-400 font-bold uppercase text-[11px] mt-4">Kembali</button>
               </div>
