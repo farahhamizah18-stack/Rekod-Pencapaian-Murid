@@ -37,7 +37,8 @@
     const { jsPDF } = window.jspdf;
 
     const DEFAULT_SPREADSHEET_ID = '1y62616eZuUGWqV75Y_D9m7UPQXx9IldR1kR7szLu1Bo';
-    const FOLDER_DRIVE_ID = '16nQ_z_MLOhp09i6BsHqrCVdlmQMNkU2';
+    // Mengemaskini Folder ID mengikut permintaan terkini pengguna
+    const FOLDER_DRIVE_ID = '16nQ_z_MLOhp09i6BsHqrCqVdlmQMNkU2';
     const DEFAULT_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwMkyH6bF-b1pi0P3Q8ZQ8_DBmt8kK1hvFuy6GmLRHtAZkeePk94loquB-jUKsM2jlc/exec';
     const LOGO_URL = 'https://i.postimg.cc/VsW3PJMS/logo-sekolah.jpg';
 
@@ -113,17 +114,17 @@
 
       /**
        * Fungsi untuk melukis teks bercampur (Latin & Cina) dalam PDF.
-       * Saiz fon Cina ditetapkan kepada 12pt mengikut permintaan.
-       * Menggunakan canvas untuk ketepatan visual simbol Cina.
+       * Saiz fon Cina ditetapkan kepada 12pt secara konsisten.
+       * Menggunakan canvas untuk mengekalkan visual fon Kaiti/Simplified.
        */
       const drawMixedText = (doc, text, x, y, size = 11, isBold = false, align = 'left', columnWidth = 0) => {
         if (!text) return;
         const segments = text.match(/[\u4E00-\u9FFF]+|[^\u4E00-\u9FFF]+/g) || [];
         
-        const chineseFontSize = 12; // Saiz spesifik untuk simbol cina
-        const scaleFactor = 4; // Untuk kualiti render canvas yang lebih tajam
+        const chineseFontSize = 12; // Saiz 12pt untuk Cina
+        const scaleFactor = 4; // Kualiti tajam untuk render canvas
 
-        // Pengiraan Lebar Keseluruhan Segmen (untuk alignment)
+        // Pra-pengiraan lebar semua segmen
         let totalWidthMm = 0;
         const computedSegments = segments.map(segment => {
           const isChin = isChinese(segment[0]);
@@ -132,7 +133,7 @@
             const tempCtx = tempCanvas.getContext('2d');
             tempCtx.font = `${isBold ? 'bold' : 'normal'} ${chineseFontSize * scaleFactor}px "Kaiti", "楷体", "STKaiti", serif`;
             const widthPx = tempCtx.measureText(segment).width;
-            const widthMm = (widthPx / scaleFactor) * (25.4 / 72); // Convert points to mm
+            const widthMm = (widthPx / scaleFactor) * (25.4 / 72); 
             totalWidthMm += widthMm;
             return { segment, isChin, widthMm };
           } else {
@@ -169,10 +170,10 @@
             ctx.fillText(item.segment, 0, textHeightPx / 2);
             
             const imgData = canvas.toDataURL('image/png');
-            const mmHeight = (chineseFontSize * (25.4 / 72)) * 1.2;
+            const mmHeight = (chineseFontSize * (25.4 / 72)) * 1.15;
             
-            // Baseline adjustment: Sedikit ke atas untuk selari dengan Latin
-            doc.addImage(imgData, 'PNG', currentX, y - (chineseFontSize * 0.28), item.widthMm, mmHeight, undefined, 'FAST');
+            // Baseline adjustment supaya selari dengan font Helvetica
+            doc.addImage(imgData, 'PNG', currentX, y - (chineseFontSize * 0.3), item.widthMm, mmHeight, undefined, 'FAST');
             currentX += item.widthMm;
           } else {
             doc.setFont('helvetica', isBold ? 'bold' : 'normal'); 
@@ -214,7 +215,7 @@
         y += 2;
         drawMixedText(doc, "SENARAI NAMA MURID DAN PENCAPAIAN", margin, y, 11, true); y += 5;
 
-        // Definisi Lebar Lajur (Total 180mm)
+        // Spesifikasi lebar lajur mengikut permintaan
         const colW = {
           no: 10,
           nama: 125,
@@ -223,33 +224,27 @@
         };
         const tableX = margin;
         const tableW = pageWidth - (margin * 2);
-        const rowH = 8.5; 
+        const rowH = 9.5; 
         
         doc.setFillColor(240, 240, 240).rect(tableX, y, tableW, rowH, 'F');
         doc.setDrawColor(80, 80, 80).rect(tableX, y, tableW, rowH);
         doc.setFont('helvetica', 'bold').setFontSize(9);
         
-        // Header Jadual - Alignment Center untuk No, Tahun, Pencapaian
-        doc.text("NO", tableX + colW.no/2, y + 5.5, { align: 'center' });
-        doc.text("NAMA MURID", tableX + colW.no + 3, y + 5.5);
-        doc.text("TAHUN", tableX + colW.no + colW.nama + colW.tahun/2, y + 5.5, { align: 'center' });
-        doc.text("PENCAPAIAN", tableX + colW.no + colW.nama + colW.tahun + colW.pencapaian/2, y + 5.5, { align: 'center' });
+        // Header Jadual
+        doc.text("NO", tableX + colW.no/2, y + 6, { align: 'center' });
+        doc.text("NAMA MURID", tableX + colW.no + 3, y + 6);
+        doc.text("TAHUN", tableX + colW.no + colW.nama + colW.tahun/2, y + 6, { align: 'center' });
+        doc.text("PENCAPAIAN", tableX + colW.no + colW.nama + colW.tahun + colW.pencapaian/2, y + 6, { align: 'center' });
         y += rowH;
 
         rekod.peserta.forEach((p, idx) => {
           doc.setDrawColor(200).rect(tableX, y, tableW, rowH);
           
-          // Lajur NO (Center)
-          drawMixedText(doc, String(idx + 1), tableX, y + 5.5, 10, false, 'center', colW.no);
-          
-          // Lajur NAMA (Left)
-          drawMixedText(doc, p.nama, tableX + colW.no + 3, y + 5.5, 10, false);
-          
-          // Lajur TAHUN (Center)
-          drawMixedText(doc, p.tahun, tableX + colW.no + colW.nama, y + 5.5, 10, false, 'center', colW.tahun);
-          
-          // Lajur PENCAPAIAN (Center)
-          drawMixedText(doc, p.pencapaian, tableX + colW.no + colW.nama + colW.tahun, y + 5.5, 10, false, 'center', colW.pencapaian);
+          // Data Baris dengan Alignment
+          drawMixedText(doc, String(idx + 1), tableX, y + 6, 10, false, 'center', colW.no);
+          drawMixedText(doc, p.nama, tableX + colW.no + 3, y + 6, 10, false);
+          drawMixedText(doc, p.tahun, tableX + colW.no + colW.nama, y + 6, 10, false, 'center', colW.tahun);
+          drawMixedText(doc, p.pencapaian, tableX + colW.no + colW.nama + colW.tahun, y + 6, 10, false, 'center', colW.pencapaian);
           
           y += rowH;
         });
